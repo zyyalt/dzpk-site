@@ -29,16 +29,17 @@
     }
 
     .wrap {
-      max-width: 1380px;
+      max-width: 1560px;
       margin: 0 auto;
       padding: 20px;
     }
 
     .topbar {
       display: grid;
-      grid-template-columns: 1.2fr 1fr;
+      grid-template-columns: minmax(0, 1.45fr) 360px;
       gap: 16px;
       margin-bottom: 16px;
+      align-items: start;
     }
 
     .card {
@@ -127,9 +128,7 @@
     }
 
     .table-layout {
-      display: grid;
-      grid-template-columns: 320px minmax(0, 1fr) 320px;
-      gap: 16px;
+      margin-top: 16px;
     }
 
     .sidebar {
@@ -164,7 +163,7 @@
     }
 
     .poker-table {
-      min-height: 760px;
+      min-height: 660px;
       position: relative;
       border-radius: 28px;
       overflow: hidden;
@@ -192,6 +191,67 @@
       z-index: 2;
     }
 
+    .room-panel {
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .mini-chat .chat-messages {
+      height: 360px;
+      max-height: 360px;
+    }
+
+    .table-stage {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .center-potbar {
+      display: flex;
+      justify-content: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin: 14px 0 14px;
+    }
+
+    .center-chip {
+      min-width: 150px;
+      padding: 10px 18px;
+      border-radius: 16px;
+      background: rgba(11, 20, 48, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+    }
+
+    .center-chip-label {
+      font-size: 12px;
+      color: #b7c8ef;
+      margin-bottom: 4px;
+    }
+
+    .center-chip-value {
+      font-size: 26px;
+      font-weight: 900;
+      color: #ffffff;
+    }
+
+    .table-actions-wrap {
+      padding: 14px 16px;
+    }
+
+    .table-actions-wrap .raise-box {
+      margin-top: 0;
+    }
+
+    .table-actions-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
     .community-row {
       display: flex;
       justify-content: center;
@@ -202,7 +262,7 @@
 
     .seat-grid {
       position: relative;
-      min-height: 720px;
+      min-height: 660px;
     }
 
     .seat {
@@ -415,6 +475,17 @@
       line-height: 1.6;
     }
 
+    .lobby-chat {
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .lobby-chat .chat-messages {
+      height: 260px;
+      max-height: 260px;
+    }
+
     .mono {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
@@ -449,12 +520,17 @@
         grid-template-columns: 1fr;
       }
 
+      .mini-chat .chat-messages {
+        height: 240px;
+        max-height: 240px;
+      }
+
       .poker-table {
-        min-height: 1080px;
+        min-height: 980px;
       }
 
       .seat-grid {
-        min-height: 1020px;
+        min-height: 920px;
       }
     }
 
@@ -489,6 +565,10 @@
       .raise-box {
         grid-template-columns: 1fr;
       }
+
+      .table-actions-grid {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -501,12 +581,14 @@
         <div class="sub">
           支持创建房间、加入房间、实时同步牌局和聊天。房主可以在开始前设置盲注和后手码量。
         </div>
+
         <div class="controls">
           <input id="nameInput" placeholder="输入你的昵称" maxlength="16" />
           <input id="roomInput" placeholder="输入房间号，例如 A1B2C3" maxlength="6" />
           <button id="createBtn" class="btn-green">创建房间</button>
           <button id="joinBtn" class="btn-blue">加入房间</button>
         </div>
+
         <div class="config-grid">
           <select id="blindSelect">
             <option value="10,20">盲注 10 / 20</option>
@@ -521,84 +603,91 @@
             <option value="10000">后手码量 10000</option>
           </select>
         </div>
+
         <div class="footer-line">
           开始前只有房主能修改配置；开始后会锁定，直到本局彻底结束或房主重新开始整场游戏。
         </div>
+
+        <div class="room-panel">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+            <div>
+              <div style="font-size:18px;font-weight:800;margin-bottom:6px;">当前连接</div>
+              <div class="sub" id="roomMeta">未进入房间</div>
+            </div>
+            <button id="copyBtn" class="btn-yellow" style="max-width:220px;">复制邀请链接</button>
+          </div>
+
+          <div class="stats">
+            <div class="stat">
+              <div class="stat-label">房间号</div>
+              <div class="stat-value mono" id="roomIdStat">-</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">牌局状态</div>
+              <div class="stat-value" id="statusStat">等待中</div>
+            </div>
+          </div>
+
+          <div class="action-panel">
+            <button id="startBtn" class="btn-green">开始/下一手</button>
+            <button id="resetMatchBtn" class="btn-yellow">重新开始整场</button>
+          </div>
+
+          <div class="action-panel">
+            <button id="leaveBtn" class="btn-red">离开房间</button>
+            <button id="copyRoomBtn" class="btn-blue">复制房间号</button>
+          </div>
+        </div>
       </div>
 
-      <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
-          <div>
-            <div style="font-size:18px;font-weight:800;margin-bottom:6px;">当前连接</div>
-            <div class="sub" id="roomMeta">未进入房间</div>
-          </div>
-          <button id="copyBtn" class="btn-yellow">复制邀请链接</button>
+      <div class="card mini-chat">
+        <div style="font-size:18px;font-weight:800;margin-bottom:10px;">房间聊天</div>
+        <div class="chat-messages" id="chatBox"></div>
+        <div class="chat-input-row">
+          <input id="chatInput" placeholder="输入聊天内容，回车发送" maxlength="300" />
+          <button id="chatSendBtn" class="btn-blue">发送</button>
         </div>
-        <div class="stats">
-          <div class="stat">
-            <div class="stat-label">房间号</div>
-            <div class="stat-value mono" id="roomIdStat">-</div>
-          </div>
-          <div class="stat">
-            <div class="stat-label">牌局状态</div>
-            <div class="stat-value" id="statusStat">等待中</div>
-          </div>
-          <div class="stat">
-            <div class="stat-label">公共池</div>
-            <div class="stat-value" id="potStat">0</div>
-          </div>
-          <div class="stat">
-            <div class="stat-label">当前下注</div>
-            <div class="stat-value" id="betStat">0</div>
-          </div>
-        </div>
-        <div class="action-panel">
-          <button id="startBtn" class="btn-green">开始/下一手</button>
-          <button id="resetMatchBtn" class="btn-yellow">重新开始整场</button>
-        </div>
-        <div class="action-panel">
-          <button id="leaveBtn" class="btn-red">离开房间</button>
-          <button id="copyRoomBtn" class="btn-blue">复制房间号</button>
-        </div>
-        <div class="raise-box">
-          <input id="raiseInput" type="number" min="0" placeholder="加注到多少" />
-          <button id="raiseBtn" class="btn-yellow">加注</button>
-        </div>
-        <div class="action-panel">
-          <button id="foldBtn" class="btn-red">弃牌</button>
-          <button id="checkCallBtn" class="btn-blue">过牌 / 跟注</button>
-        </div>
+        <div class="footer-line">同一房间内所有玩家都能实时看到聊天内容。</div>
       </div>
     </div>
 
     <div class="table-layout">
-      <div class="sidebar">
-        <div class="card">
-          <div style="font-size:18px;font-weight:800;margin-bottom:10px;">操作日志</div>
-          <div class="log" id="logBox"></div>
-        </div>
-      </div>
+      <div class="table-stage">
+        <div class="poker-table">
+          <div class="table-ring"></div>
 
-      <div class="poker-table">
-        <div class="table-ring"></div>
-        <div class="center-box">
-          <div class="center-title" id="phaseText">等待玩家加入</div>
-          <div class="center-sub" id="turnText">创建房间后开始牌局</div>
-          <div class="community-row" id="communityCards"></div>
-          <div class="winner" id="winnerText"></div>
-        </div>
-        <div class="seat-grid" id="seatGrid"></div>
-      </div>
+          <div class="center-box">
+            <div class="center-title" id="phaseText">等待玩家加入</div>
+            <div class="center-sub" id="turnText">创建房间后开始牌局</div>
 
-      <div class="sidebar">
-        <div class="card">
-          <div style="font-size:18px;font-weight:800;margin-bottom:10px;">房间聊天</div>
-          <div class="chat-messages" id="chatBox"></div>
-          <div class="chat-input-row">
-            <input id="chatInput" placeholder="输入聊天内容，回车发送" maxlength="300" />
-            <button id="chatSendBtn" class="btn-blue">发送</button>
+            <div class="center-potbar">
+              <div class="center-chip">
+                <div class="center-chip-label">公共池</div>
+                <div class="center-chip-value" id="potStat">0</div>
+              </div>
+              <div class="center-chip">
+                <div class="center-chip-label">当前下注</div>
+                <div class="center-chip-value" id="betStat">0</div>
+              </div>
+            </div>
+
+            <div class="community-row" id="communityCards"></div>
+            <div class="winner" id="winnerText"></div>
           </div>
-          <div class="footer-line">同一房间内所有玩家都能实时看到聊天内容。</div>
+
+          <div class="seat-grid" id="seatGrid"></div>
+        </div>
+
+        <div class="card table-actions-wrap">
+          <div class="raise-box">
+            <input id="raiseInput" type="number" min="0" placeholder="加注到多少" />
+            <button id="raiseBtn" class="btn-yellow">加注</button>
+          </div>
+
+          <div class="table-actions-grid">
+            <button id="foldBtn" class="btn-red">弃牌</button>
+            <button id="checkCallBtn" class="btn-blue">过牌 / 跟注</button>
+          </div>
         </div>
       </div>
     </div>
@@ -666,12 +755,12 @@
     };
 
     const POSITIONS = [
-      { left: "50%", top: "78%", transform: "translate(-50%, -50%)" },
-      { left: "11%", top: "58%", transform: "translate(-50%, -50%)" },
-      { left: "18%", top: "22%", transform: "translate(-50%, -50%)" },
-      { left: "50%", top: "8%", transform: "translate(-50%, 0)" },
-      { left: "82%", top: "22%", transform: "translate(-50%, -50%)" },
-      { left: "89%", top: "58%", transform: "translate(-50%, -50%)" },
+      { left: "50%", top: "90%", transform: "translate(-50%, -50%)" },
+      { left: "20%", top: "70%", transform: "translate(-50%, -50%)" },
+      { left: "20%", top: "30%", transform: "translate(-50%, -50%)" },
+      { left: "50%", top: "10%", transform: "translate(-50%, -50%)" },
+      { left: "80%", top: "30%", transform: "translate(-50%, -50%)" },
+      { left: "80%", top: "70%", transform: "translate(-50%, -50%)" },
     ];
 
     const state = {
@@ -1396,7 +1485,9 @@
         els.turnText.textContent = "创建房间后开始牌局";
         els.communityCards.innerHTML = "";
         els.winnerText.textContent = "";
-        els.logBox.innerHTML = "<div class='log-item'>这里会显示每一步操作。</div>";
+        if (els.logBox) {
+          els.logBox.innerHTML = "<div class='log-item'>这里会显示每一步操作。</div>";
+        }
         els.chatBox.innerHTML = "<div class='chat-item'><div class='chat-head'><span>系统</span><span>-</span></div><div class='chat-body'>这里会显示聊天消息。</div></div>";
         els.seatGrid.innerHTML = renderEmptySeats();
         setButtonsDisabled(true);
@@ -1418,7 +1509,11 @@
 
       els.winnerText.textContent = room.winnerText || "";
       els.communityCards.innerHTML = room.community.map((c) => renderCard(c)).join("");
-      els.logBox.innerHTML = (room.log || []).map((x) => `<div class="log-item">${escapeHtml(x)}</div>`).join("") || "<div class='log-item'>暂无日志</div>";
+      if (els.logBox) {
+        els.logBox.innerHTML =
+          (room.log || []).map((x) => `<div class="log-item">${escapeHtml(x)}</div>`).join("")
+          || "<div class='log-item'>暂无日志</div>";
+      }
       els.chatBox.innerHTML = (room.chat || []).map((m) => `
     <div class="chat-item">
       <div class="chat-head"><span>${escapeHtml(m.sender || "匿名")}</span><span>${escapeHtml(m.timeText || "")}</span></div>
