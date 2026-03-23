@@ -702,6 +702,13 @@
       alert(msg);
     }
 
+    function nowText() {
+      const d = new Date();
+      const hh = String(d.getHours()).padStart(2, "0");
+      const mm = String(d.getMinutes()).padStart(2, "0");
+      return `${hh}:${mm}`;
+    }
+
     function saveName() {
       const name = (els.nameInput.value || "").trim().slice(0, 16);
       if (!name) throw new Error("请先输入昵称");
@@ -1282,6 +1289,10 @@
           if (!current) return room;
 
           const leavingName = current.name;
+          const leavingSeat = current.seat;
+          const wasTurn = room.turnSeat === leavingSeat;
+          const wasPlaying = room.status === "playing";
+
           delete room.players[state.clientId];
 
           const rest = Object.values(room.players || {});
@@ -1292,8 +1303,29 @@
           appendLog(room, `${leavingName} 离开了房间`);
           addChat(room, "系统", `${leavingName} 离开了房间`);
 
-          if (rest.length === 0) room.__deleteMe = true;
-          else finishMatchIfNeeded(room);
+          if (rest.length === 0) {
+            room.__deleteMe = true;
+          } else {
+            if (wasPlaying && wasTurn) {
+              const aliveAfterLeave = playersInHand(room);
+
+              if (aliveAfterLeave.length <= 1) {
+                awardSingleWinner(room);
+              } else {
+                room.turnSeat = nextSeatFrom(
+                  room,
+                  leavingSeat,
+                  (p) => p.inHand && !p.folded && !p.allIn
+                );
+
+                if (room.turnSeat == null) {
+                  autoRunToShowdown(room);
+                }
+              }
+            }
+
+            finishMatchIfNeeded(room);
+          }
 
           return room;
         });
