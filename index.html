@@ -870,21 +870,27 @@
       const alive = activeMatchPlayers(room);
       if (alive.length >= 2) return false;
 
-      clearPlayerHandState(room);
-      room.pot = 0;
-      room.currentBet = 0;
+      // 整场结束时不要清空 cards，这样前端在 matchOver 状态下可以亮出所有人的手牌
       room.turnSeat = null;
-      room.phase = "比赛结束";
       room.status = "matchOver";
+      room.phase = "比赛结束";
+      room.currentBet = 0;
+      room.pot = 0;
+      room.minRaise = room.settings?.bb || room.minRaise || 0;
+
+      for (const p of sortedPlayers(room)) {
+        p.bet = 0;
+        p.hasActed = true;
+      }
 
       if (alive.length === 1) {
         room.matchWinnerId = alive[0].id;
         room.winnerText = `${alive[0].name} 获得整场最终胜利`;
-        appendLog(room, room.winnerText);
+        appendLog(room, `${room.winnerText}，亮出所有玩家手牌`);
       } else {
         room.matchWinnerId = null;
         room.winnerText = "比赛结束";
-        appendLog(room, "比赛结束");
+        appendLog(room, "比赛结束，亮出所有玩家手牌");
       }
 
       return true;
@@ -1133,24 +1139,39 @@
           const oldCurrentBet = room.currentBet;
           const raiseSize = raiseTo - oldCurrentBet;
           const isAllIn = raiseTo === maxTotal;
+          const isFullRaise = raiseSize >= room.minRaise;
 
-          if (raiseSize < room.minRaise && !isAllIn) {
+          // 非 all-in 时，仍然必须满足最小加注
+          if (!isFullRaise && !isAllIn) {
             throw new Error(`最小加注到 ${oldCurrentBet + room.minRaise}`);
           }
 
           const paid = raiseTo - p.bet;
           postChips(room, p, paid);
-          room.currentBet = p.bet;
-          room.minRaise = Math.max(room.settings.bb, raiseSize);
 
-          for (const other of sortedPlayers(room)) {
-            if (other.id !== p.id && other.inHand && !other.folded && !other.allIn) {
-              other.hasActed = false;
+          // 无论是否 full raise，桌面当前下注都要更新到最新 all-in 金额
+          room.currentBet = p.bet;
+
+          // 只有“完整加注”才会重置别人行动权、更新 minRaise
+          if (isFullRaise) {
+            room.minRaise = Math.max(room.settings.bb, raiseSize);
+
+            for (const other of sortedPlayers(room)) {
+              if (other.id !== p.id && other.inHand && !other.folded && !other.allIn) {
+                other.hasActed = false;
+              }
             }
           }
 
           p.hasActed = true;
-          appendLog(room, `${p.name} 加注到 ${raiseTo}`);
+
+          if (isAllIn && !isFullRaise) {
+            appendLog(room, `${p.name} 短码 ALL-IN 到 ${raiseTo}`);
+          } else if (isAllIn) {
+            appendLog(room, `${p.name} ALL-IN 到 ${raiseTo}`);
+          } else {
+            appendLog(room, `${p.name} 加注到 ${raiseTo}`);
+          }
         }
 
         if (awardSingleWinner(room)) return room;
@@ -1412,13 +1433,14 @@
       const canStart = !!(mine && room.hostId === state.clientId && (room.status === "lobby" || room.status === "handOver"));
       const canResetMatch = !!(mine && room.hostId === state.clientId);
       const canLeave = !!mine;
+      const canRaiseNow = !!(myTurn && mine.stack > Math.max(0, room.currentBet - mine.bet));
 
       els.startBtn.disabled = !canStart;
       els.resetMatchBtn.disabled = !canResetMatch;
       els.leaveBtn.disabled = !canLeave;
       els.copyRoomBtn.disabled = !canLeave;
       els.foldBtn.disabled = !myTurn;
-      els.raiseBtn.disabled = !myTurn;
+      els.raiseBtn.disabled = !canRaiseNow;
       els.chatSendBtn.disabled = !mine;
       els.chatInput.disabled = !mine;
 
@@ -1432,9 +1454,21 @@
       if (mine && room.status === "playing") {
         const toCall = Math.max(0, room.currentBet - mine.bet);
         checkCallText = toCall === 0 ? "过牌" : `跟注 ${Math.min(toCall, mine.stack)}`;
+
         const minRaiseTo = room.currentBet + room.minRaise;
         const maxRaiseTo = mine.bet + mine.stack;
-        els.raiseInput.placeholder = myTurn ? `最小加到 ${Math.min(minRaiseTo, maxRaiseTo)}` : "加注到多少";
+
+        if (myTurn) {
+          if (maxRaiseTo <= room.currentBet) {
+            els.raiseInput.placeholder = "筹码不足以加注";
+          } else if (maxRaiseTo < minRaiseTo) {
+            els.raiseInput.placeholder = `可直接ALL-IN到 ${maxRaiseTo}`;
+          } else {
+            els.raiseInput.placeholder = `最小加到 ${minRaiseTo}`;
+          }
+        } else {
+          els.raiseInput.placeholder = "加注到多少";
+        }
       }
 
       els.checkCallBtn.textContent = checkCallText;
