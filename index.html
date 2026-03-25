@@ -693,34 +693,21 @@
     </div>
   </div>
 
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-    import {
-      getFirestore,
-      doc,
-      getDoc,
-      setDoc,
-      onSnapshot,
-      runTransaction,
-      deleteDoc,
-      serverTimestamp,
-    } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+  
+  <script src="https://static.cloudbase.net/cloudbase-js-sdk/2.17.3/cloudbase.full.js"></script>
+  <script>
 
-    // =========================
-    // 把这里替换成你自己的 Firebase 配置
-    // =========================
-    const firebaseConfig = {
-      apiKey: "AIzaSyCyAN9TzuCQPP66-y6xx6uUBCQj-xfhfjo",
-      authDomain: "dzpk-163c3.firebaseapp.com",
-      projectId: "dzpk-163c3",
-      storageBucket: "dzpk-163c3.firebasestorage.app",
-      messagingSenderId: "945778745997",
-      appId: "1:945778745997:web:8f8c6e83a0d1011addb8c4",
-      measurementId: "G-Z5BWR36BNE"
-    };
+    const CLOUDBASE_ENV_ID = "dzpk-0giiv83p790a0f2b";
+    const CLOUDBASE_REGION = "ap-shanghai";
+    const ROOM_COLLECTION = "poker_rooms";
+    const ROOM_ACTION_FUNCTION = "pokerRoomAction";
 
-    const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app);
+    const app = cloudbase.init({
+      env: CLOUDBASE_ENV_ID,
+      region: CLOUDBASE_REGION,
+    });
+    const auth = app.auth();
+    let db = null;
 
     const els = {
       nameInput: document.getElementById("nameInput"),
@@ -743,7 +730,6 @@
       raiseBtn: document.getElementById("raiseBtn"),
       foldBtn: document.getElementById("foldBtn"),
       checkCallBtn: document.getElementById("checkCallBtn"),
-      logBox: document.getElementById("logBox"),
       phaseText: document.getElementById("phaseText"),
       turnText: document.getElementById("turnText"),
       communityCards: document.getElementById("communityCards"),
@@ -764,18 +750,22 @@
     ];
 
     const state = {
-      clientId: localStorage.getItem("poker_client_id") || crypto.randomUUID(),
+      clientId: null,
       roomId: null,
       room: null,
-      unsub: null,
+      watcher: null,
+      ready: false,
     };
-    localStorage.setItem("poker_client_id", state.clientId);
 
     const savedName = localStorage.getItem("poker_name") || "";
     els.nameInput.value = savedName;
 
     const urlRoom = new URLSearchParams(location.search).get("room");
     if (urlRoom) els.roomInput.value = urlRoom.toUpperCase();
+
+    function toast(msg) {
+      alert(msg);
+    }
 
     function getSelectedBlinds() {
       const [sb, bb] = els.blindSelect.value.split(",").map(Number);
@@ -785,28 +775,12 @@
     function getSelectedStack() {
       return Number(els.stackSelect.value);
     }
-    //第二段代码，主要是 JavaScript 逻辑，处理用户交互、游戏状态管理和与 Firebase 的实时数据库同步。代码定义了各种函数来管理游戏流程，如创建房间、加入房间、开始牌局、玩家行动（加注、弃牌、跟注/过牌）等。通过 Firebase 的实时监听功能，确保所有玩家的界面能够即时反映当前牌局的状态变化。此外，还包括一些工具函数，如生成随机房间 ID、洗牌、发牌等，以及一个简单的聊天系统，让同一房间内的玩家可以交流。整体逻辑清晰，功能完整，支持基本的德州扑克玩法。
-
-    function toast(msg) {
-      alert(msg);
-    }
-
-    function nowText() {
-      const d = new Date();
-      const hh = String(d.getHours()).padStart(2, "0");
-      const mm = String(d.getMinutes()).padStart(2, "0");
-      return `${hh}:${mm}`;
-    }
 
     function saveName() {
       const name = (els.nameInput.value || "").trim().slice(0, 16);
       if (!name) throw new Error("请先输入昵称");
       localStorage.setItem("poker_name", name);
       return name;
-    }
-
-    function roomRef(roomId) {
-      return doc(db, "poker_rooms", roomId);
     }
 
     function generateRoomId() {
@@ -816,21 +790,34 @@
       return out;
     }
 
-    function basePlayer(id, name, seat, stack = 1000) {
-      return {
-        id,
-        name,
-        seat,
-        stack,
-        bet: 0,
-        folded: false,
-        allIn: false,
-        inHand: false,
-        hasActed: false,
-        cards: [],
-        joinedAt: Date.now(),
-        outOfMatch: false,
-      };
+    async function initCloudbase() {
+      await auth.signInAnonymously();
+      const user = auth.currentUser || await auth.getCurrentUser();
+
+      if (!user?.uid) {
+        throw new Error("云开发匿名登录失败");
+      }
+
+      state.clientId = user.uid;
+      db = app.database();
+      state.ready = true;
+      render();
+
+      if (urlRoom && savedName) {
+        await joinRoom().catch(() => {});
+      }
+    }
+
+    async function callRoomAction(action, payload = {}) {
+      if (!state.ready) throw new Error("云开发尚未初始化完成");
+      const res = await app.callFunction({
+        name: ROOM_ACTION_FUNCTION,
+        data: { action, payload },
+        parse: true,
+      });
+      const result = res?.result ?? res;
+      if (result?.ok === false) throw new Error(result.message || "操作失败");
+      return result;
     }
 
     function sortedPlayers(room) {
@@ -845,491 +832,32 @@
       return room?.players?.[state.clientId] || null;
     }
 
-    function usedSeats(room) {
-      return new Set(sortedPlayers(room).map((p) => p.seat));
-    }
-
-    function firstAvailableSeat(room) {
-      const used = usedSeats(room);
-      for (let i = 0; i < 6; i++) if (!used.has(i)) return i;
-      return -1;
-    }
-
-    function nextSeatFrom(room, fromSeat, predicate) {
-      for (let i = 1; i <= 6; i++) {
-        const seat = (fromSeat + i + 6) % 6;
-        const p = playerBySeat(room, seat);
-        if (p && predicate(p)) return seat;
-      }
-      return null;
-    }
-
-    function playersInHand(room) {
-      return sortedPlayers(room).filter((p) => p.inHand && !p.folded);
-    }
-
-    function playersAbleToAct(room) {
-      return sortedPlayers(room).filter((p) => p.inHand && !p.folded && !p.allIn);
-    }
-
-    function eligibleForNewHand(room) {
-      return sortedPlayers(room).filter((p) => p.stack > 0 && !p.outOfMatch);
-    }
-
-    function activeMatchPlayers(room) {
-      return sortedPlayers(room).filter((p) => p.stack > 0 && !p.outOfMatch);
-    }
-
-    function deckCreate() {
-      const suits = ["S", "H", "D", "C"];
-      const ranks = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
-      const out = [];
-      for (const s of suits) for (const r of ranks) out.push(r + s);
-      return out;
-    }
-
-    function shuffle(deck) {
-      const arr = [...deck];
-      for (let i = arr.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [arr[i], arr[j]] = [arr[j], arr[i]];
-      }
-      return arr;
-    }
-
-    function dealCard(room) {
-      const c = room.deck.pop();
-      if (!c) throw new Error("牌堆已空");
-      return c;
-    }
-
-    function postChips(room, player, amount) {
-      const paid = Math.max(0, Math.min(player.stack, amount));
-      player.stack -= paid;
-      player.bet += paid;
-      room.pot += paid;
-      if (player.stack === 0) player.allIn = true;
-      return paid;
-    }
-
-    function appendLog(room, text) {
-      room.log = [text, ...(room.log || [])].slice(0, 40);
-      room.lastUpdated = Date.now();
-    }
-
-    function addChat(room, sender, text) {
-      room.chat = room.chat || [];
-      room.chat.unshift({
-        id: crypto.randomUUID(),
-        sender,
-        text,
-        createdAt: Date.now(),
-        timeText: nowText(),
-      });
-      room.chat = room.chat.slice(0, 80);
-    }
-
-    function getBlindSeats(room) {
-      const alive = eligibleForNewHand(room);
-      if (alive.length < 2) return { sbSeat: null, bbSeat: null };
-
-      if (alive.length === 2) {
-        const sbSeat = room.dealerSeat;
-        const bbSeat = nextSeatFrom(room, room.dealerSeat, (p) => p.stack > 0 && !p.outOfMatch);
-        return { sbSeat, bbSeat };
-      }
-
-      const sbSeat = nextSeatFrom(room, room.dealerSeat, (p) => p.stack > 0 && !p.outOfMatch);
-      const bbSeat = nextSeatFrom(room, sbSeat, (p) => p.stack > 0 && !p.outOfMatch);
-      return { sbSeat, bbSeat };
-    }
-
-    function clearPlayerHandState(room) {
-      for (const p of sortedPlayers(room)) {
-        p.bet = 0;
-        p.folded = false;
-        p.allIn = false;
-        p.inHand = false;
-        p.hasActed = false;
-        p.cards = [];
-      }
-    }
-
-    function finishMatchIfNeeded(room) {
-      const alive = activeMatchPlayers(room);
-      if (alive.length >= 2) return false;
-
-      // 整场结束时不要清空 cards，这样前端在 matchOver 状态下可以亮出所有人的手牌
-      room.turnSeat = null;
-      room.status = "matchOver";
-      room.phase = "比赛结束";
-      room.currentBet = 0;
-      room.pot = 0;
-      room.minRaise = room.settings?.bb || room.minRaise || 0;
-
-      for (const p of sortedPlayers(room)) {
-        p.bet = 0;
-        p.hasActed = true;
-      }
-
-      if (alive.length === 1) {
-        room.matchWinnerId = alive[0].id;
-        room.winnerText = `${alive[0].name} 获得整场最终胜利`;
-        appendLog(room, `${room.winnerText}，亮出所有玩家手牌`);
-      } else {
-        room.matchWinnerId = null;
-        room.winnerText = "比赛结束";
-        appendLog(room, "比赛结束，亮出所有玩家手牌");
-      }
-
-      return true;
-    }
-
-    function startHand(room) {
-      if (finishMatchIfNeeded(room)) {
-        throw new Error("筹码不足两人，整场已结束，请点击重新开始整场");
-      }
-
-      const eligible = eligibleForNewHand(room);
-      if (eligible.length < 2) throw new Error("至少需要 2 名有筹码的玩家");
-
-      room.handNo = (room.handNo || 0) + 1;
-      room.status = "playing";
-      room.phase = "preflop";
-      room.winnerText = "";
-      room.community = [];
-      room.pot = 0;
-      room.currentBet = 0;
-      room.minRaise = room.settings.bb;
-      room.lastUpdated = Date.now();
-      room.matchWinnerId = null;
-
-      room.dealerSeat = nextSeatFrom(room, room.dealerSeat ?? -1, (p) => p.stack > 0 && !p.outOfMatch);
-      room.deck = shuffle(deckCreate());
-
-      for (const p of sortedPlayers(room)) {
-        p.bet = 0;
-        p.folded = false;
-        p.allIn = false;
-        p.inHand = p.stack > 0 && !p.outOfMatch;
-        p.hasActed = false;
-        p.cards = [];
-      }
-
-      const dealOrder = [];
-      let cursor = room.dealerSeat;
-      for (let i = 0; i < eligible.length; i++) {
-        cursor = nextSeatFrom(room, cursor, (p) => p.inHand);
-        if (cursor != null) dealOrder.push(cursor);
-      }
-
-      for (let r = 0; r < 2; r++) {
-        for (const seat of dealOrder) {
-          const p = playerBySeat(room, seat);
-          p.cards.push(dealCard(room));
-        }
-      }
-
-      const { sbSeat, bbSeat } = getBlindSeats(room);
-      const sbPlayer = playerBySeat(room, sbSeat);
-      const bbPlayer = playerBySeat(room, bbSeat);
-      const sbPaid = postChips(room, sbPlayer, room.settings.sb);
-      const bbPaid = postChips(room, bbPlayer, room.settings.bb);
-
-      room.currentBet = Math.max(sbPlayer.bet, bbPlayer.bet);
-      room.minRaise = room.settings.bb;
-      room.turnSeat = nextSeatFrom(room, bbSeat, (p) => p.inHand && !p.folded && !p.allIn);
-
-      room.log = [
-        `第 ${room.handNo} 手牌开始`,
-        `庄家：${playerBySeat(room, room.dealerSeat)?.name || "-"}`,
-        `${sbPlayer.name} 下小盲 ${sbPaid}`,
-        `${bbPlayer.name} 下大盲 ${bbPaid}`,
-        ...(room.log || []).slice(0, 36),
-      ];
-
-      if (room.turnSeat == null) autoRunToShowdown(room);
-    }
-
-    function everyoneSettled(room) {
-      const alive = playersInHand(room);
-      if (alive.length <= 1) return true;
-      return alive.every((p) => p.allIn || (p.hasActed && p.bet === room.currentBet));
-    }
-
-    function awardSingleWinner(room) {
-      const alive = playersInHand(room);
-      if (alive.length !== 1) return false;
-
-      const winner = alive[0];
-      winner.stack += room.pot;
-      room.winnerText = `${winner.name} 直接赢下 ${room.pot}`;
-      appendLog(room, room.winnerText);
-
-      room.pot = 0;
-      room.currentBet = 0;
-      room.turnSeat = null;
-      room.status = "handOver";
-      room.phase = "结束";
-
-      for (const p of sortedPlayers(room)) p.bet = 0;
-
-      if (finishMatchIfNeeded(room)) return true;
-      return true;
-    }
-
-    function moveToNextStreet(room) {
-      for (const p of sortedPlayers(room)) {
-        p.bet = 0;
-        p.hasActed = p.allIn || p.folded || !p.inHand;
-      }
-
-      room.currentBet = 0;
-      room.minRaise = room.settings.bb;
-
-      if (room.phase === "preflop") {
-        room.phase = "flop";
-        room.community.push(dealCard(room), dealCard(room), dealCard(room));
-        appendLog(room, "发出翻牌");
-      } else if (room.phase === "flop") {
-        room.phase = "turn";
-        room.community.push(dealCard(room));
-        appendLog(room, "发出转牌");
-      } else if (room.phase === "turn") {
-        room.phase = "river";
-        room.community.push(dealCard(room));
-        appendLog(room, "发出河牌");
-      } else {
-        doShowdown(room);
-        return;
-      }
-
-      room.turnSeat = nextSeatFrom(room, room.dealerSeat, (p) => p.inHand && !p.folded && !p.allIn);
-      if (room.turnSeat == null) autoRunToShowdown(room);
-    }
-
-    function autoRunToShowdown(room) {
-      while (room.community.length < 5) {
-        if (room.phase === "preflop") {
-          room.phase = "flop";
-          room.community.push(dealCard(room), dealCard(room), dealCard(room));
-        } else if (room.phase === "flop") {
-          room.phase = "turn";
-          room.community.push(dealCard(room));
-        } else if (room.phase === "turn") {
-          room.phase = "river";
-          room.community.push(dealCard(room));
-        } else {
-          break;
-        }
-      }
-      doShowdown(room);
-    }
-
-    function markEliminatedPlayers(room) {
-      for (const p of sortedPlayers(room)) {
-        if (p.stack <= 0) p.outOfMatch = true;
-      }
-    }
-
-    function doShowdown(room) {
-      const alive = playersInHand(room);
-      if (alive.length === 0) {
-        room.status = "handOver";
-        room.phase = "结束";
-        room.turnSeat = null;
-        room.winnerText = "本手无人存活";
-        return;
-      }
-
-      while (room.community.length < 5) room.community.push(dealCard(room));
-
-      const evaluated = alive.map((p) => ({
-        player: p,
-        score: evaluateSeven([...p.cards, ...room.community]),
-      }));
-
-      evaluated.sort((a, b) => compareScore(b.score, a.score));
-      const best = evaluated[0].score;
-      const winners = evaluated.filter((e) => compareScore(e.score, best) === 0);
-
-      const share = Math.floor(room.pot / winners.length);
-      let extra = room.pot % winners.length;
-
-      for (const w of winners) {
-        w.player.stack += share + (extra > 0 ? 1 : 0);
-        if (extra > 0) extra--;
-      }
-
-      room.winnerText = `${winners.map((w) => w.player.name).join("、")} 赢下 ${room.pot} · ${scoreLabel(best)}`;
-      appendLog(room, room.winnerText);
-
-      room.pot = 0;
-      room.currentBet = 0;
-      room.turnSeat = null;
-      room.status = "handOver";
-      room.phase = "结束";
-
-      for (const p of sortedPlayers(room)) p.bet = 0;
-
-      markEliminatedPlayers(room);
-      finishMatchIfNeeded(room);
-    }
-
-    async function withRoomTransaction(roomId, mutate) {
-      const ref = roomRef(roomId);
-      return runTransaction(db, async (tx) => {
-        const snap = await tx.get(ref);
-        if (!snap.exists()) throw new Error("房间不存在");
-        const room = snap.data();
-        mutate(room);
-        tx.set(ref, room);
-      });
-    }
-
-    function takeAction(kind, raiseToRaw) {
-      if (!state.roomId) return;
-
-      withRoomTransaction(state.roomId, (room) => {
-        if (room.status !== "playing") throw new Error("当前不在进行中的牌局");
-
-        const p = room.players[state.clientId];
-        if (!p) throw new Error("你不在房间里");
-        if (room.turnSeat !== p.seat) throw new Error("还没轮到你操作");
-        if (!p.inHand || p.folded || p.allIn) throw new Error("你当前不能操作");
-
-        const toCall = Math.max(0, room.currentBet - p.bet);
-
-        if (kind === "fold") {
-          p.folded = true;
-          p.hasActed = true;
-          appendLog(room, `${p.name} 弃牌`);
-        }
-
-        if (kind === "checkcall") {
-          if (toCall === 0) {
-            p.hasActed = true;
-            appendLog(room, `${p.name} 过牌`);
-          } else {
-            const paid = postChips(room, p, toCall);
-            p.hasActed = true;
-            appendLog(room, `${p.name} 跟注 ${paid}`);
-          }
-        }
-
-        if (kind === "raise") {
-          const maxTotal = p.bet + p.stack;
-          const raiseTo = Math.floor(Number(raiseToRaw));
-
-          if (!Number.isFinite(raiseTo)) throw new Error("请输入有效的加注金额");
-          if (raiseTo <= room.currentBet) throw new Error("加注金额必须大于当前下注");
-          if (raiseTo > maxTotal) throw new Error("筹码不足");
-
-          const oldCurrentBet = room.currentBet;
-          const raiseSize = raiseTo - oldCurrentBet;
-          const isAllIn = raiseTo === maxTotal;
-          const isFullRaise = raiseSize >= room.minRaise;
-
-          // 非 all-in 时，仍然必须满足最小加注
-          if (!isFullRaise && !isAllIn) {
-            throw new Error(`最小加注到 ${oldCurrentBet + room.minRaise}`);
-          }
-
-          const paid = raiseTo - p.bet;
-          postChips(room, p, paid);
-
-          // 无论是否 full raise，桌面当前下注都要更新到最新 all-in 金额
-          room.currentBet = p.bet;
-
-          // 只有“完整加注”才会重置别人行动权、更新 minRaise
-          if (isFullRaise) {
-            room.minRaise = Math.max(room.settings.bb, raiseSize);
-
-            for (const other of sortedPlayers(room)) {
-              if (other.id !== p.id && other.inHand && !other.folded && !other.allIn) {
-                other.hasActed = false;
-              }
-            }
-          }
-
-          p.hasActed = true;
-
-          if (isAllIn && !isFullRaise) {
-            appendLog(room, `${p.name} 短码 ALL-IN 到 ${raiseTo}`);
-          } else if (isAllIn) {
-            appendLog(room, `${p.name} ALL-IN 到 ${raiseTo}`);
-          } else {
-            appendLog(room, `${p.name} 加注到 ${raiseTo}`);
-          }
-        }
-
-        if (awardSingleWinner(room)) return room;
-
-        if (everyoneSettled(room)) {
-          if (room.phase === "river") doShowdown(room);
-          else moveToNextStreet(room);
-          return room;
-        }
-
-        room.turnSeat = nextSeatFrom(room, room.turnSeat, (x) => x.inHand && !x.folded && !x.allIn);
-        if (room.turnSeat == null) autoRunToShowdown(room);
-        return room;
-      }).catch((err) => toast(err.message || "操作失败"));
-    }
-
     async function createRoom() {
       const name = saveName();
-      let roomId = generateRoomId();
-
-      for (let i = 0; i < 6; i++) {
-        const snap = await getDoc(roomRef(roomId));
-        if (!snap.exists()) break;
-        roomId = generateRoomId();
-      }
-
-      const blinds = getSelectedBlinds();
+      const { sb, bb } = getSelectedBlinds();
       const startingStack = getSelectedStack();
 
-      const room = {
-        roomId,
-        hostId: state.clientId,
-        status: "lobby",
-        phase: "等待中",
-        handNo: 0,
-        dealerSeat: -1,
-        turnSeat: null,
-        pot: 0,
-        currentBet: 0,
-        minRaise: blinds.bb,
-        community: [],
-        deck: [],
-        winnerText: "",
-        matchWinnerId: null,
-        settings: {
-          maxPlayers: 6,
-          startingStack,
-          sb: blinds.sb,
-          bb: blinds.bb,
-        },
-        players: {
-          [state.clientId]: basePlayer(state.clientId, name, 0, startingStack),
-        },
-        chat: [{
-          id: crypto.randomUUID(),
-          sender: "系统",
-          text: `${name} 创建了房间`,
-          createdAt: Date.now(),
-          timeText: nowText()
-        }],
-        log: [`${name} 创建了房间`],
-        createdAt: Date.now(),
-        createdAtServer: serverTimestamp(),
-        lastUpdated: Date.now(),
-      };
+      let lastErr = null;
+      for (let i = 0; i < 8; i++) {
+        const roomId = generateRoomId();
+        try {
+          await callRoomAction("createRoom", {
+            roomId,
+            name,
+            sb,
+            bb,
+            startingStack,
+          });
+          connectRoom(roomId);
+          history.replaceState(null, "", `${location.pathname}?room=${roomId}`);
+          return;
+        } catch (err) {
+          lastErr = err;
+          if (!String(err.message || "").includes("房间号已存在")) break;
+        }
+      }
 
-      await setDoc(roomRef(roomId), room);
-      connectRoom(roomId);
-      history.replaceState(null, "", `${location.pathname}?room=${roomId}`);
+      throw lastErr || new Error("创建房间失败");
     }
 
     async function joinRoom() {
@@ -1337,55 +865,29 @@
       const roomId = (els.roomInput.value || "").trim().toUpperCase();
       if (!roomId) return toast("请输入房间号");
 
-      try {
-        await withRoomTransaction(roomId, (room) => {
-          if (!room.players) room.players = {};
-
-          if (room.players[state.clientId]) {
-            room.players[state.clientId].name = name;
-            room.players[state.clientId].outOfMatch =
-              room.players[state.clientId].stack <= 0 ? true : room.players[state.clientId].outOfMatch;
-            appendLog(room, `${name} 重新连接`);
-            addChat(room, "系统", `${name} 重新连接`);
-            return room;
-          }
-
-          const seat = firstAvailableSeat(room);
-          if (seat < 0) throw new Error("房间已满");
-
-          room.players[state.clientId] = basePlayer(
-            state.clientId,
-            name,
-            seat,
-            room.settings?.startingStack || 1000
-          );
-
-          appendLog(room, `${name} 加入了房间`);
-          addChat(room, "系统", `${name} 加入了房间`);
-          return room;
-        });
-
-        connectRoom(roomId);
-        history.replaceState(null, "", `${location.pathname}?room=${roomId}`);
-      } catch (err) {
-        toast(err.message || "加入失败");
-      }
+      await callRoomAction("joinRoom", { roomId, name });
+      connectRoom(roomId);
+      history.replaceState(null, "", `${location.pathname}?room=${roomId}`);
     }
 
     function connectRoom(roomId) {
-      state.roomId = roomId;
-      if (state.unsub) state.unsub();
+      if (!db) return;
 
-      state.unsub = onSnapshot(roomRef(roomId), (snap) => {
-        if (!snap.exists()) {
-          state.room = null;
+      state.roomId = roomId;
+      if (state.watcher) {
+        state.watcher.close().catch?.(() => {});
+        state.watcher = null;
+      }
+
+      state.watcher = db.collection(ROOM_COLLECTION).doc(roomId).watch({
+        onChange(snapshot) {
+          const room = snapshot?.docs?.[0] || snapshot?.docChanges?.[0]?.doc || null;
+          state.room = room || null;
           render();
-          return;
+        },
+        onError(err) {
+          toast(err?.message || "房间监听失败");
         }
-        state.room = snap.data();
-        render();
-      }, (err) => {
-        toast(err.message || "房间监听失败");
       });
     }
 
@@ -1394,66 +896,83 @@
       const roomId = state.roomId;
 
       try {
-        await withRoomTransaction(roomId, (room) => {
-          const current = room.players?.[state.clientId];
-          if (!current) return room;
-
-          const leavingName = current.name;
-          const leavingSeat = current.seat;
-          const wasTurn = room.turnSeat === leavingSeat;
-          const wasPlaying = room.status === "playing";
-
-          delete room.players[state.clientId];
-
-          const rest = Object.values(room.players || {});
-          if (room.hostId === state.clientId) {
-            room.hostId = rest.sort((a, b) => a.joinedAt - b.joinedAt)[0]?.id || null;
-          }
-
-          appendLog(room, `${leavingName} 离开了房间`);
-          addChat(room, "系统", `${leavingName} 离开了房间`);
-
-          if (rest.length === 0) {
-            room.__deleteMe = true;
-          } else {
-            if (wasPlaying && wasTurn) {
-              const aliveAfterLeave = playersInHand(room);
-
-              if (aliveAfterLeave.length <= 1) {
-                awardSingleWinner(room);
-              } else {
-                room.turnSeat = nextSeatFrom(
-                  room,
-                  leavingSeat,
-                  (p) => p.inHand && !p.folded && !p.allIn
-                );
-
-                if (room.turnSeat == null) {
-                  autoRunToShowdown(room);
-                }
-              }
-            }
-
-            finishMatchIfNeeded(room);
-          }
-
-          return room;
-        });
-
-        const snap = await getDoc(roomRef(roomId));
-        if (snap.exists() && snap.data().__deleteMe) {
-          await deleteDoc(roomRef(roomId));
-        }
+        await callRoomAction("leaveRoom", { roomId });
       } catch (err) {
         toast(err.message || "离开失败");
       }
 
-      if (state.unsub) state.unsub();
-      state.unsub = null;
+      if (state.watcher) {
+        state.watcher.close().catch?.(() => {});
+        state.watcher = null;
+      }
       state.roomId = null;
       state.room = null;
       history.replaceState(null, "", location.pathname);
       render();
+    }
+
+    async function takeAction(kind, raiseToRaw) {
+      if (!state.roomId) return;
+      try {
+        await callRoomAction("takeAction", {
+          roomId: state.roomId,
+          kind,
+          raiseTo: raiseToRaw == null ? null : Number(raiseToRaw),
+        });
+      } catch (err) {
+        toast(err.message || "操作失败");
+      }
+    }
+
+    async function startOrNextHand() {
+      if (!state.roomId) return;
+      const { sb, bb } = getSelectedBlinds();
+      const startingStack = getSelectedStack();
+      try {
+        await callRoomAction("startHand", {
+          roomId: state.roomId,
+          sb,
+          bb,
+          startingStack,
+        });
+      } catch (err) {
+        toast(err.message || "开始失败");
+      }
+    }
+
+    async function resetMatch() {
+      if (!state.roomId) return;
+      const { sb, bb } = getSelectedBlinds();
+      const startingStack = getSelectedStack();
+      try {
+        await callRoomAction("resetMatch", {
+          roomId: state.roomId,
+          sb,
+          bb,
+          startingStack,
+        });
+      } catch (err) {
+        toast(err.message || "重开失败");
+      }
+    }
+
+    async function sendChat() {
+      if (!state.roomId || !state.room) return;
+      const mine = me(state.room);
+      if (!mine) return;
+
+      const text = (els.chatInput.value || "").trim().slice(0, 300);
+      if (!text) return;
+      els.chatInput.value = "";
+
+      try {
+        await callRoomAction("sendChat", {
+          roomId: state.roomId,
+          text,
+        });
+      } catch (err) {
+        toast(err.message || "发送失败");
+      }
     }
 
     function humanPhase(phase) {
@@ -1476,6 +995,19 @@
       els.statusStat.textContent = room ? humanPhase(room.phase) : "等待中";
       els.potStat.textContent = String(room?.pot || 0);
       els.betStat.textContent = String(room?.currentBet || 0);
+
+      if (!state.ready) {
+        els.roomMeta.textContent = "正在连接腾讯云 CloudBase…";
+        els.phaseText.textContent = "初始化中";
+        els.turnText.textContent = "请稍候";
+        els.communityCards.innerHTML = "";
+        els.winnerText.textContent = "";
+        els.chatBox.innerHTML = "<div class='chat-item'><div class='chat-head'><span>系统</span><span>-</span></div><div class='chat-body'>正在初始化云开发连接。</div></div>";
+        els.seatGrid.innerHTML = renderEmptySeats();
+        setButtonsDisabled(true);
+        return;
+      }
+
       els.roomMeta.textContent = room
         ? `房主：${room.players?.[room.hostId]?.name || "-"} · 玩家数：${Object.keys(room.players || {}).length} · 盲注 ${room.settings?.sb || 0}/${room.settings?.bb || 0} · 后手 ${room.settings?.startingStack || 0}`
         : "未进入房间";
@@ -1485,14 +1017,19 @@
         els.turnText.textContent = "创建房间后开始牌局";
         els.communityCards.innerHTML = "";
         els.winnerText.textContent = "";
-        if (els.logBox) {
-          els.logBox.innerHTML = "<div class='log-item'>这里会显示每一步操作。</div>";
-        }
         els.chatBox.innerHTML = "<div class='chat-item'><div class='chat-head'><span>系统</span><span>-</span></div><div class='chat-body'>这里会显示聊天消息。</div></div>";
         els.seatGrid.innerHTML = renderEmptySeats();
-        setButtonsDisabled(true);
         els.blindSelect.disabled = false;
         els.stackSelect.disabled = false;
+        els.startBtn.disabled = true;
+        els.resetMatchBtn.disabled = true;
+        els.leaveBtn.disabled = true;
+        els.copyRoomBtn.disabled = true;
+        els.foldBtn.disabled = true;
+        els.raiseBtn.disabled = true;
+        els.checkCallBtn.disabled = true;
+        els.chatSendBtn.disabled = true;
+        els.chatInput.disabled = true;
         return;
       }
 
@@ -1508,18 +1045,13 @@
       }
 
       els.winnerText.textContent = room.winnerText || "";
-      els.communityCards.innerHTML = room.community.map((c) => renderCard(c)).join("");
-      if (els.logBox) {
-        els.logBox.innerHTML =
-          (room.log || []).map((x) => `<div class="log-item">${escapeHtml(x)}</div>`).join("")
-          || "<div class='log-item'>暂无日志</div>";
-      }
+      els.communityCards.innerHTML = (room.community || []).map((c) => renderCard(c)).join("");
       els.chatBox.innerHTML = (room.chat || []).map((m) => `
-    <div class="chat-item">
-      <div class="chat-head"><span>${escapeHtml(m.sender || "匿名")}</span><span>${escapeHtml(m.timeText || "")}</span></div>
-      <div class="chat-body">${escapeHtml(m.text || "")}</div>
-    </div>
-  `).join("") || "<div class='chat-item'><div class='chat-head'><span>系统</span><span>-</span></div><div class='chat-body'>暂无聊天</div></div>";
+        <div class="chat-item">
+          <div class="chat-head"><span>${escapeHtml(m.sender || "匿名")}</span><span>${escapeHtml(m.timeText || "")}</span></div>
+          <div class="chat-body">${escapeHtml(m.text || "")}</div>
+        </div>
+      `).join("") || "<div class='chat-item'><div class='chat-head'><span>系统</span><span>-</span></div><div class='chat-body'>暂无聊天</div></div>";
 
       els.seatGrid.innerHTML = renderSeats(room);
       els.chatBox.scrollTop = 0;
@@ -1614,18 +1146,18 @@
           : `<span class="sub">未发牌</span>`;
 
         html += `
-      <div class="${seatClass}" style="left:${pos.left};top:${pos.top};transform:${pos.transform};">
-        <div class="seat-header">
-          <div class="seat-name"><span>#${seat + 1}</span><span>${escapeHtml(p.name)}</span></div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">${badges}</div>
-        </div>
-        <div class="seat-meta">
-          <span>筹码：${p.stack}</span>
-          <span>本轮下注：${p.bet || 0}</span>
-        </div>
-        <div class="cards">${cards}</div>
-      </div>
-    `;
+          <div class="${seatClass}" style="left:${pos.left};top:${pos.top};transform:${pos.transform};">
+            <div class="seat-header">
+              <div class="seat-name"><span>#${seat + 1}</span><span>${escapeHtml(p.name)}</span></div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">${badges}</div>
+            </div>
+            <div class="seat-meta">
+              <span>筹码：${p.stack}</span>
+              <span>本轮下注：${p.bet || 0}</span>
+            </div>
+            <div class="cards">${cards}</div>
+          </div>
+        `;
       }
       return html;
     }
@@ -1653,118 +1185,6 @@
         .replaceAll("'", "&#39;");
     }
 
-    const RANK_VALUE = { "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9, T: 10, J: 11, Q: 12, K: 13, A: 14 };
-    const HAND_NAMES = ["高牌", "一对", "两对", "三条", "顺子", "同花", "葫芦", "四条", "同花顺"];
-
-    function parseCard(card) {
-      return { rank: RANK_VALUE[card[0]], suit: card[1] };
-    }
-
-    function combinations(arr, k) {
-      const result = [];
-      function helper(start, path) {
-        if (path.length === k) return result.push([...path]);
-        for (let i = start; i < arr.length; i++) {
-          path.push(arr[i]);
-          helper(i + 1, path);
-          path.pop();
-        }
-      }
-      helper(0, []);
-      return result;
-    }
-
-    function straightHigh(ranks) {
-      const uniq = [...new Set(ranks)].sort((a, b) => b - a);
-      if (uniq.includes(14)) uniq.push(1);
-      let streak = 1;
-      for (let i = 0; i < uniq.length - 1; i++) {
-        if (uniq[i] - 1 === uniq[i + 1]) {
-          streak++;
-          if (streak >= 5) return uniq[i - 3];
-        } else if (uniq[i] !== uniq[i + 1]) {
-          streak = 1;
-        }
-      }
-      return null;
-    }
-
-    function evaluateFive(cards) {
-      const parsed = cards.map(parseCard);
-      const ranks = parsed.map((c) => c.rank).sort((a, b) => b - a);
-      const suits = parsed.map((c) => c.suit);
-      const flush = suits.every((s) => s === suits[0]);
-      const straight = straightHigh(ranks);
-
-      const countMap = {};
-      for (const r of ranks) countMap[r] = (countMap[r] || 0) + 1;
-
-      const groups = Object.entries(countMap)
-        .map(([rank, count]) => ({ rank: Number(rank), count }))
-        .sort((a, b) => b.count - a.count || b.rank - a.rank);
-
-      if (flush && straight) return { category: 8, tiebreak: [straight] };
-      if (groups[0].count === 4) return { category: 7, tiebreak: [groups[0].rank, groups[1].rank] };
-      if (groups[0].count === 3 && groups[1].count === 2) return { category: 6, tiebreak: [groups[0].rank, groups[1].rank] };
-      if (flush) return { category: 5, tiebreak: ranks };
-      if (straight) return { category: 4, tiebreak: [straight] };
-      if (groups[0].count === 3) return { category: 3, tiebreak: [groups[0].rank, ...groups.slice(1).map((g) => g.rank).sort((a, b) => b - a)] };
-
-      if (groups[0].count === 2 && groups[1].count === 2) {
-        const highPair = Math.max(groups[0].rank, groups[1].rank);
-        const lowPair = Math.min(groups[0].rank, groups[1].rank);
-        return { category: 2, tiebreak: [highPair, lowPair, groups[2].rank] };
-      }
-
-      if (groups[0].count === 2) {
-        return { category: 1, tiebreak: [groups[0].rank, ...groups.slice(1).map((g) => g.rank).sort((a, b) => b - a)] };
-      }
-
-      return { category: 0, tiebreak: ranks };
-    }
-
-    function compareScore(a, b) {
-      if (a.category !== b.category) return a.category - b.category;
-      const len = Math.max(a.tiebreak.length, b.tiebreak.length);
-      for (let i = 0; i < len; i++) {
-        const av = a.tiebreak[i] || 0;
-        const bv = b.tiebreak[i] || 0;
-        if (av !== bv) return av - bv;
-      }
-      return 0;
-    }
-
-    function evaluateSeven(cards) {
-      let best = null;
-      for (const combo of combinations(cards, 5)) {
-        const score = evaluateFive(combo);
-        if (!best || compareScore(score, best) > 0) best = score;
-      }
-      return best;
-    }
-
-    function scoreLabel(score) {
-      return HAND_NAMES[score.category] || "牌型";
-    }
-
-    async function sendChat() {
-      if (!state.roomId || !state.room) return;
-      const mine = me(state.room);
-      if (!mine) return;
-
-      const text = (els.chatInput.value || "").trim().slice(0, 300);
-      if (!text) return;
-
-      els.chatInput.value = "";
-
-      withRoomTransaction(state.roomId, (room) => {
-        const p = room.players?.[state.clientId];
-        if (!p) throw new Error("你不在房间里");
-        addChat(room, p.name, text);
-        return room;
-      }).catch((err) => toast(err.message || "发送失败"));
-    }
-
     els.createBtn.addEventListener("click", () => createRoom().catch((err) => toast(err.message || "创建失败")));
     els.joinBtn.addEventListener("click", () => joinRoom().catch((err) => toast(err.message || "加入失败")));
 
@@ -1789,76 +1209,8 @@
       }
     });
 
-    els.startBtn.addEventListener("click", () => {
-      if (!state.roomId) return;
-
-      withRoomTransaction(state.roomId, (room) => {
-        if (room.hostId !== state.clientId) throw new Error("只有房主能开始下一手");
-
-        if (room.status === "lobby") {
-          const { sb, bb } = getSelectedBlinds();
-          const startingStack = getSelectedStack();
-
-          room.settings.sb = sb;
-          room.settings.bb = bb;
-          room.settings.startingStack = startingStack;
-
-          for (const p of sortedPlayers(room)) {
-            p.stack = startingStack;
-            p.outOfMatch = false;
-          }
-
-          appendLog(room, `房主设置盲注 ${sb}/${bb}，后手 ${startingStack}`);
-          addChat(room, "系统", `房主设置盲注 ${sb}/${bb}，后手 ${startingStack}`);
-        }
-
-        startHand(room);
-        return room;
-      }).catch((err) => toast(err.message || "开始失败"));
-    });
-
-    els.resetMatchBtn.addEventListener("click", () => {
-      if (!state.roomId) return;
-
-      withRoomTransaction(state.roomId, (room) => {
-        if (room.hostId !== state.clientId) throw new Error("只有房主能重新开始整场");
-
-        const { sb, bb } = getSelectedBlinds();
-        const startingStack = getSelectedStack();
-
-        room.settings.sb = sb;
-        room.settings.bb = bb;
-        room.settings.startingStack = startingStack;
-        room.status = "lobby";
-        room.phase = "等待中";
-        room.handNo = 0;
-        room.dealerSeat = -1;
-        room.turnSeat = null;
-        room.pot = 0;
-        room.currentBet = 0;
-        room.minRaise = bb;
-        room.community = [];
-        room.deck = [];
-        room.winnerText = "";
-        room.matchWinnerId = null;
-
-        for (const p of sortedPlayers(room)) {
-          p.stack = startingStack;
-          p.bet = 0;
-          p.folded = false;
-          p.allIn = false;
-          p.inHand = false;
-          p.hasActed = false;
-          p.cards = [];
-          p.outOfMatch = false;
-        }
-
-        appendLog(room, `房主重新开始整场，盲注 ${sb}/${bb}，后手 ${startingStack}`);
-        addChat(room, "系统", `房主重新开始整场，盲注 ${sb}/${bb}，后手 ${startingStack}`);
-        return room;
-      }).catch((err) => toast(err.message || "重开失败"));
-    });
-
+    els.startBtn.addEventListener("click", startOrNextHand);
+    els.resetMatchBtn.addEventListener("click", resetMatch);
     els.leaveBtn.addEventListener("click", () => leaveRoom().catch((err) => toast(err.message || "离开失败")));
     els.foldBtn.addEventListener("click", () => takeAction("fold"));
     els.checkCallBtn.addEventListener("click", () => takeAction("checkcall"));
@@ -1872,8 +1224,12 @@
       }
     });
 
-    if (urlRoom && savedName) joinRoom().catch(() => { });
     render();
+    initCloudbase().catch((err) => {
+      toast(err.message || "CloudBase 初始化失败");
+      render();
+    });
+
   </script>
 </body>
 
