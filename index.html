@@ -535,6 +535,15 @@
     }
 
     @media (max-width: 760px) {
+      .wrap {
+        padding: 10px;
+      }
+
+      .card {
+        border-radius: 16px;
+        padding: 12px;
+      }
+
       .controls {
         grid-template-columns: 1fr 1fr;
       }
@@ -543,18 +552,113 @@
         grid-template-columns: 1fr;
       }
 
+      .poker-table {
+        min-height: auto;
+        padding: 12px;
+        border-radius: 20px;
+      }
+
+      .table-ring {
+        inset: 12px;
+      }
+
+      .table-stage {
+        gap: 10px;
+      }
+
+      .center-box {
+        position: static;
+        transform: none;
+        width: 100%;
+        margin: 0 auto 10px;
+        padding: 6px 2px 2px;
+      }
+
+      .center-potbar {
+        gap: 8px;
+        margin: 10px 0 10px;
+      }
+
+      .center-chip {
+        min-width: 110px;
+        padding: 8px 10px;
+        border-radius: 14px;
+      }
+
+      .center-chip-label {
+        font-size: 11px;
+      }
+
+      .center-chip-value {
+        font-size: 20px;
+      }
+
+      .community-row {
+        gap: 6px;
+        margin: 8px 0 10px;
+      }
+
+      .seat-grid {
+        min-height: auto;
+        position: static;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        padding-top: 4px;
+      }
+
       .seat {
-        width: 180px;
+        position: static !important;
+        left: auto !important;
+        top: auto !important;
+        transform: none !important;
+        width: 100%;
+        min-width: 0;
+        padding: 10px;
+        border-radius: 14px;
+      }
+
+      .seat.empty {
+        min-height: 72px;
+      }
+
+      .seat-header {
+        margin-bottom: 6px;
+      }
+
+      .seat-name {
+        font-size: 14px;
+        gap: 6px;
+      }
+
+      .seat-meta {
+        font-size: 12px;
+        gap: 6px;
+        margin-bottom: 8px;
+      }
+
+      .badge {
+        padding: 3px 6px;
+        font-size: 10px;
+      }
+
+      .cards {
+        gap: 5px;
       }
 
       .playing-card {
-        width: 42px;
-        height: 62px;
-        font-size: 16px;
+        width: 32px;
+        height: 46px;
+        font-size: 12px;
+        border-radius: 7px;
       }
 
       .center-title {
-        font-size: 24px;
+        font-size: 20px;
+      }
+
+      .center-sub {
+        font-size: 13px;
       }
 
       .action-panel {
@@ -567,7 +671,61 @@
       }
 
       .table-actions-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      input,
+      button,
+      select {
+        padding: 10px 12px;
+        font-size: 13px;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .controls {
         grid-template-columns: 1fr;
+      }
+
+      .seat-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+      }
+
+      .seat {
+        padding: 8px;
+      }
+
+      .seat-name {
+        font-size: 13px;
+      }
+
+      .seat-meta {
+        font-size: 11px;
+      }
+
+      .playing-card {
+        width: 28px;
+        height: 40px;
+        font-size: 11px;
+      }
+
+      .center-chip {
+        min-width: 96px;
+        padding: 7px 8px;
+      }
+
+      .center-chip-value {
+        font-size: 18px;
+      }
+
+      .center-title {
+        font-size: 18px;
+      }
+
+      .center-sub {
+        font-size: 12px;
       }
     }
   </style>
